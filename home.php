@@ -1,5 +1,10 @@
 <?php
 session_start();
+// Check if user is logged in and is not an admin
+if (!isset($_SESSION['user_id']) || $_SESSION['is_admin'] == 1) {
+    header("Location: login.php");
+    exit();
+}
 $db = new mysqli('localhost', 'root', '', 'wastewise');
 
 if ($db->connect_error) {
@@ -40,19 +45,6 @@ function getEventCategories() {
   return $result->fetch_all(MYSQLI_ASSOC);
 }
 
-// Function to get wishlist items
-function getWishlistItems($user_id) {
-  global $db;
-  $query = "SELECT w.*, p.name, p.price, p.image 
-            FROM wishlist w 
-            JOIN products p ON w.product_id = p.id 
-            WHERE w.user_id = ?";
-  $stmt = $db->prepare($query);
-  $stmt->bind_param("i", $user_id);
-  $stmt->execute();
-  $result = $stmt->get_result();
-  return $result->fetch_all(MYSQLI_ASSOC);
-}
 
 // Updated function to get recent orders grouped by status
 function getRecentOrdersGrouped($user_id, $limit = 50) {
@@ -110,22 +102,19 @@ function getRecentOrdersGrouped($user_id, $limit = 50) {
     return $grouped_orders;
 }
 
-// Handle wishlist actions
-if (isset($_POST['action']) && isset($_POST['product_id'])) {
-  $productId = intval($_POST['product_id']);
-  $userId = $_SESSION['user_id'];
-  
-  if ($_POST['action'] === 'add') {
-      $stmt = $db->prepare("INSERT IGNORE INTO wishlist (user_id, product_id) VALUES (?, ?)");
-      $stmt->bind_param("ii", $userId, $productId);
-      $stmt->execute();
-  } elseif ($_POST['action'] === 'remove') {
-      $stmt = $db->prepare("DELETE FROM wishlist WHERE user_id = ? AND product_id = ?");
-      $stmt->bind_param("ii", $userId, $productId);
-      $stmt->execute();
-  }
-  exit; // Stop further execution for AJAX requests
+function getRelatedProducts($product_id, $limit = 4) {
+    global $db;
+    $stmt = $db->prepare("SELECT p.* FROM products p 
+                          JOIN products current ON p.category = current.category 
+                          WHERE current.id = ? AND p.id != ? 
+                          ORDER BY RAND() LIMIT ?");
+    $stmt->bind_param("iii", $product_id, $product_id, $limit);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    return $result->fetch_all(MYSQLI_ASSOC);
 }
+
+// Handle wishlist actions - REMOVED
 
 $search = isset($_GET['search']) ? $_GET['search'] : '';
 $category = isset($_GET['category']) ? $_GET['category'] : '';
@@ -139,7 +128,7 @@ $regular_products = array_filter($all_products, function($product) {
   return is_null($product['event_category_id']) || strtolower($product['event_category_name']) !== 'christmas';
 });
 
-$wishlist = getWishlistItems($_SESSION['user_id']);
+
 $grouped_orders = getRecentOrdersGrouped($_SESSION['user_id']);
 
 $categories = ['Paper', 'Plastic', 'Metal', 'Glass', 'Electronics', 'Textiles'];
@@ -191,40 +180,42 @@ $event_categories = getEventCategories();
       }
   </style>
 </head>
-<body class="bg-gray-100 font-sans">
+<body class="bg-gray-100 font-sans flex flex-col min-h-screen">
   <!-- Sidebar Toggle Button -->
-  <button class="fixed top-4 left-4 z-50 bg-green-600 text-white p-2 rounded-full shadow-lg" onclick="toggleSidebar()">
+  <button id="sidebarToggle" class="fixed top-4 left-4 z-50 bg-green-600 text-white p-2 rounded-full shadow-lg hover:bg-green-700 transition duration-300 lg:hidden">
       <i class="fas fa-bars"></i>
   </button>
 
   <!-- Sidebar -->
-  <nav class="fixed top-0 left-0 h-full w-64 bg-green-800 text-white p-5 transform -translate-x-full transition-transform duration-200 ease-in-out z-40" id="sidebar">
+  <nav id="sidebar" class="fixed top-0 left-0 h-full w-64 bg-green-800 text-white p-5 transform -translate-x-full transition-transform duration-300 ease-in-out z-40 lg:translate-x-0">
       <div class="flex flex-col h-full">
+          <div class="flex items-center justify-between mb-8">
+              <span class="text-2xl font-semibold">Wastewise</span>
+              <button id="closeSidebar" class="text-white focus:outline-none lg:hidden">
+                  <i class="fas fa-times"></i>
+              </button>
+          </div>
           <div class="flex-grow">
-              <a href="#" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200" onclick="showSection('home')">
-                  <i class="fas fa-home mr-2"></i>
+              <a href="#" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200 flex items-center" onclick="showSection('home')">
+                  <i class="fas fa-home mr-3"></i>
                   <span>Home</span>
               </a>
-              <a href="#" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200" onclick="showSection('wishlist')">
-                  <i class="fas fa-heart mr-2"></i>
-                  <span>Wishlist</span>
-              </a>
-              <a href="cart.php" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200">
-                  <i class="fas fa-shopping-cart mr-2"></i>
+              <a href="cart.php" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200 flex items-center">
+                  <i class="fas fa-shopping-cart mr-3"></i>
                   <span>Cart</span>
               </a>
-              <a href="#" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200" onclick="showSection('notifications')">
-                  <i class="fas fa-bell mr-2"></i>
+              <a href="#" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200 flex items-center" onclick="showSection('notifications')">
+                  <i class="fas fa-bell mr-3"></i>
                   <span>Notifications</span>
               </a>
           </div>
           <div>
-              <span class="block py-2 px-4">
+              <span class="block py-2 px-4 text-sm">
                   <i class="fas fa-user mr-2"></i>
                   <span>Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?></span>
               </span>
-              <a href="logout.php" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200">
-                  <i class="fas fa-sign-out-alt mr-2"></i>
+              <a href="logout.php" class="block py-2 px-4 hover:bg-green-700 rounded transition duration-200 flex items-center">
+                  <i class="fas fa-sign-out-alt mr-3"></i>
                   <span>Logout</span>
               </a>
           </div>
@@ -232,7 +223,7 @@ $event_categories = getEventCategories();
   </nav>
 
   <!-- Main Content -->
-  <div class="content" id="content">
+  <div class="lg:ml-64 flex-grow">
       <!-- Header with Search -->
       <header class="bg-green-700 text-white py-6 sticky top-0 z-30">
           <div class="container mx-auto px-4">
@@ -354,9 +345,7 @@ $event_categories = getEventCategories();
                                       </div>
                                       <div class="flex justify-between items-center">
                                           <a href="order_details.php?id=<?= $order['id'] ?>" class="text-blue-600 hover:text-blue-800">View Details</a>
-                                          <?php if ($order['status'] == 'pending'): ?>
-                                              <a href="payment.php?order_id=<?= $order['id'] ?>" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Pay Now</a>
-                                          <?php elseif ($order['status'] == 'processing' || $order['status'] == 'shipped'): ?>
+                                          <?php if ($order['status'] == 'processing' || $order['status'] == 'shipped'): ?>
                                               <button onclick="cancelOrder(<?= $order['id'] ?>)" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Cancel Order</button>
                                           <?php elseif ($order['status'] == 'delivered'): ?>
                                               <button onclick="requestReturn(<?= $order['id'] ?>)" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600">Request Return</button>
@@ -384,16 +373,30 @@ $event_categories = getEventCategories();
                                    class="w-full h-48 object-cover">
                               <div class="p-4">
                                   <h3 class="text-xl font-semibold mb-2"><?= htmlspecialchars($product['name']); ?></h3>
-                                  <p class="text-gray-600 mb-4"><?= htmlspecialchars(substr($product['description'], 0, 100)) . '...'; ?></p>
-                                  <div class="flex justify-between items-center">
-                                      <span class="text-2xl font-bold text-green-600">₱<?= number_format($product['price'], 2); ?></span>
-                                      <button onclick="addToCart(<?= $product['id']; ?>)" class="bg-red-500 text-white px-4 py-2 rounded-full hover:bg-red-600 transition duration-300">
-                                          Add to Cart
-                                      </button>
+                                  <p class="text-gray-600 mb-2"><?= htmlspecialchars(substr($product['description'], 0, 100)) . '...'; ?></p>
+                                  <p class="text-sm text-gray-500 mb-2">
+                                      <?php if ($product['stock'] > 0): ?>
+                                          In stock: <?= $product['stock'] ?> available
+                                      <?php else: ?>
+                                          <span class="text-red-500 font-semibold">Out of Stock</span>
+                                      <?php endif; ?>
+                                  </p>
+                                  <div class="flex justify-between items-center mt-2">
+                                      <?php if ($product['stock'] > 0): ?>
+                                          <button onclick="addToCart(<?= $product['id']; ?>)" class="bg-green-500 text-white p-2 rounded-full hover:bg-green-600 transition duration-300">
+                                              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                              </svg>
+                                          </button>
+                                          <button onclick="buyProduct(<?= $product['id']; ?>, <?= $product['price']; ?>, '<?= htmlspecialchars($product['name']); ?>')" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition duration-300">
+                                              Buy Now
+                                          </button>
+                                      <?php else: ?>
+                                          <button disabled class="bg-gray-400 text-white px-4 py-2 rounded-full cursor-not-allowed">
+                                              Sold Out
+                                          </button>
+                                      <?php endif; ?>
                                   </div>
-                                  <button onclick="toggleWishlist(<?= $product['id']; ?>)" class="mt-2 w-full bg-pink-500 text-white px-4 py-2 rounded-full hover:bg-pink-600 transition duration-300">
-                                      <?= in_array($product['id'], array_column($wishlist, 'product_id')) ? 'Remove from Wishlist' : 'Add to Wishlist' ?>
-                                  </button>
                               </div>
                           </div>
                       <?php endforeach; ?>
@@ -417,16 +420,30 @@ $event_categories = getEventCategories();
                                    class="w-full h-48 object-cover">
                               <div class="p-4">
                                   <h3 class="text-xl font-semibold mb-2"><?= htmlspecialchars($product['name']); ?></h3>
-                                  <p class="text-gray-600 mb-4"><?= htmlspecialchars(substr($product['description'], 0, 100)) . '...'; ?></p>
-                                  <div class="flex justify-between items-center">
-                                      <span class="text-2xl font-bold text-green-600">₱<?= number_format($product['price'], 2); ?></span>
-                                      <button onclick="addToCart(<?= $product['id']; ?>)" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition duration-300">
-                                          Add to Cart
-                                      </button>
+                                  <p class="text-gray-600 mb-2"><?= htmlspecialchars(substr($product['description'], 0, 100)) . '...'; ?></p>
+                                  <p class="text-sm text-gray-500 mb-2">
+                                      <?php if ($product['stock'] > 0): ?>
+                                          In stock: <?= $product['stock'] ?> available
+                                      <?php else: ?>
+                                          <span class="text-red-500 font-semibold">Out of Stock</span>
+                                      <?php endif; ?>
+                                  </p>
+                                  <div class="flex justify-between items-center mt-2">
+                                      <?php if ($product['stock'] > 0): ?>
+                                          <button onclick="addToCart(<?= $product['id']; ?>)" class="bg-green-500 text-white p-2 rounded-full hover:bg-green-600 transition duration-300">
+                                              <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                                              </svg>
+                                          </button>
+                                          <button onclick="buyProduct(<?= $product['id']; ?>, <?= $product['price']; ?>, '<?= htmlspecialchars($product['name']); ?>')" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition duration-300">
+                                              Buy Now
+                                          </button>
+                                      <?php else: ?>
+                                          <button disabled class="bg-gray-400 text-white px-4 py-2 rounded-full cursor-not-allowed">
+                                              Sold Out
+                                          </button>
+                                      <?php endif; ?>
                                   </div>
-                                  <button onclick="toggleWishlist(<?= $product['id']; ?>)" class="mt-2 w-full bg-pink-500 text-white px-4 py-2 rounded-full hover:bg-pink-600 transition duration-300">
-                                      <?= in_array($product['id'], array_column($wishlist, 'product_id')) ? 'Remove from Wishlist' : 'Add to Wishlist' ?>
-                                  </button>
                                   <?php if (!is_null($product['event_category_id']) && strtolower($product['event_category_name']) !== 'christmas'): ?>
                                       <p class="mt-2 text-sm text-gray-500">Event: <?= htmlspecialchars($product['event_category_name']); ?></p>
                                   <?php endif; ?>
@@ -438,6 +455,40 @@ $event_categories = getEventCategories();
           </section>
       </main>
 
+      <!-- Related Products Section -->
+<section id="related-products" class="mb-16">
+    <h2 class="text-3xl font-bold mb-8 text-center text-green-800">You May Also Like</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+        <?php
+        $related_products = array_slice($all_products, 0, 4); // Get first 4 products as related (you may want to implement a more sophisticated algorithm)
+        foreach ($related_products as $product):
+        ?>
+            <div class="bg-white rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-shadow duration-300">
+                <img src="<?= htmlspecialchars($product['image'] ?? 'https://via.placeholder.com/300x300.png?text=No+Image'); ?>" 
+                     alt="<?= htmlspecialchars($product['name']); ?>" 
+                     class="w-full h-48 object-cover">
+                <div class="p-4">
+                    <h3 class="text-xl font-semibold mb-2"><?= htmlspecialchars($product['name']); ?></h3>
+                    <p class="text-gray-600 mb-2"><?= htmlspecialchars(substr($product['description'], 0, 100)) . '...'; ?></p>
+                    <p class="text-sm text-gray-500 mb-2">
+                        <?php if ($product['stock'] > 0): ?>
+                            In stock: <?= $product['stock'] ?> available
+                        <?php else: ?>
+                            <span class="text-red-500 font-semibold">Out of Stock</span>
+                        <?php endif; ?>
+                    </p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-2xl font-bold text-green-600">₱<?= number_format($product['price'], 2); ?></span>
+                        <a href="product_details.php?id=<?= $product['id']; ?>" class="bg-blue-500 text-white px-4 py-2 rounded-full hover:bg-blue-600 transition duration-300">
+                            View Details
+                        </a>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</section>
+
       <footer class="bg-green-800 text-white py-8">
           <div class="container mx-auto px-4 text-center">
               <p>&copy; 2023 Wastewise E-commerce. All rights reserved.</p>
@@ -446,52 +497,29 @@ $event_categories = getEventCategories();
       </footer>
   </div>
 
-  <!-- Quantity Modal -->
-  <div id="quantity-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
-      <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-          <div class="mt-3 text-center">
-              <button id="close-modal" class="absolute top-2 right-2 text-gray-600 hover:text-gray-900">
-                  <i class="fas fa-times"></i>
-              </button>
-              <h3 class="text-lg leading-6 font-medium text-gray-900">Select Quantity</h3>
-              <div class="mt-2 px-7 py-3">
-                  <input type="number" id="quantity-input" min="1" value="1" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500">
-              </div>
-              <div class="items-center px-4 py-3">
-                  <button id="add-to-cart-btn" class="px-4 py-2 bg-green-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-300">
-                      Add to Cart
-                  </button>
-              </div>
-          </div>
-      </div>
-  </div>
-
-  <!-- Success Modal -->
-  <div id="success-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
-      <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-          <div class="mt-3 text-center">
-              <button id="close-success-modal" class="absolute top-2 right-2 text-gray-600 hover:text-gray-900">
-                  <i class="fas fa-times"></i>
-              </button>
-              <h3 class="text-lg leading-6 font-medium text-gray-900">Successfully Added to Cart</h3>
-              <div class="mt-2 px-7 py-3">
-                  <p class="text-sm text-gray-500">Your item has been added to the cart.</p>
-              </div>
-              <div class="items-center px-4 py-3">
-                  <a href="cart.php" class="px-4 py-2 bg-green-500 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-300 inline-block">
-                      View Cart
-                  </a>
-              </div>
-          </div>
-      </div>
-  </div>
-
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script>
-      function toggleSidebar() {
-          const sidebar = document.getElementById('sidebar');
-          sidebar.classList.toggle('-translate-x-full');
-      }
+      document.addEventListener('DOMContentLoaded', function() {
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const closeSidebar = document.getElementById('closeSidebar');
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('-translatex-full');
+        }
+
+        sidebarToggle.addEventListener('click', toggleSidebar);
+        closeSidebar.addEventListener('click', toggleSidebar);
+
+        // Close sidebar when clicking outside of it
+        document.addEventListener('click', function(event) {
+            const isClickInsideSidebar = sidebar.contains(event.target);
+            const isClickOnToggleButton = sidebarToggle.contains(event.target);
+            if (!isClickInsideSidebar && !isClickOnToggleButton && !sidebar.classList.contains('-translate-x-full')) {
+                toggleSidebar();
+            }
+        });
+    });
 
       function showSection(sectionId) {
           document.getElementById('regular-products').style.display = sectionId === 'home' ? 'block' : 'none';
@@ -499,73 +527,27 @@ $event_categories = getEventCategories();
           document.getElementById('notifications').style.display = sectionId === 'notifications' ? 'block' : 'none';
       }
 
-      let currentProductId = null;
-
       function addToCart(productId) {
-          currentProductId = productId;
-          document.getElementById('quantity-modal').classList.remove('hidden');
-      }
-
-      document.getElementById('add-to-cart-btn').addEventListener('click', function() {
-          const quantity = document.getElementById('quantity-input').value;
-          
-          // Show loading state
-          this.disabled = true;
-          this.innerHTML = 'Adding...';
-          
-          // AJAX request to add item to cart
+          // Send AJAX request to add item to cart
           fetch('add_to_cart.php', {
               method: 'POST',
               headers: {
                   'Content-Type': 'application/x-www-form-urlencoded',
               },
-              body: `product_id=${currentProductId}&quantity=${quantity}`
+              body: `product_id=${productId}&quantity=1`
           })
           .then(response => response.json())
           .then(data => {
-              // Reset button state
-              this.disabled = false;
-              this.innerHTML = 'Add to Cart';
-              
               if (data.success) {
-                  document.getElementById('quantity-modal').classList.add('hidden');
-                  document.getElementById('success-modal').classList.remove('hidden');
+                  alert('Product added to cart successfully');
               } else {
-                  alert(data.message || 'Failed to add item to cart. Please try again.');
+                  alert('Failed to add product to cart. Please try again.');
               }
           })
           .catch(error => {
-              // Reset button state
-              this.disabled = false;
-              this.innerHTML = 'Add to Cart';
-              
               console.error('Error:', error);
               alert('An error occurred. Please try again.');
           });
-      });
-
-      document.getElementById('close-modal').addEventListener('click', function() {
-          document.getElementById('quantity-modal').classList.add('hidden');
-      });
-
-      document.getElementById('close-success-modal').addEventListener('click', function() {
-          document.getElementById('success-modal').classList.add('hidden');
-      });
-
-      function toggleWishlist(productId) {
-          const action = event.target.textContent.includes('Add') ? 'add' : 'remove';
-          fetch('home.php', {
-              method: 'POST',
-              headers: {
-                  'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: `action=${action}&product_id=${productId}`
-          })
-          .then(response => response.text())
-          .then(() => {
-              location.reload();
-          })
-          .catch(error => console.error('Error:', error));
       }
 
       function cancelOrder(orderId) {
@@ -617,7 +599,7 @@ $event_categories = getEventCategories();
             fetch('request_return.php', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Type': 'application/x-www-form-urlencoded'
                 },
                 body: `order_id=${orderId}`
             })
@@ -636,6 +618,19 @@ $event_categories = getEventCategories();
             });
         }
     }
+
+    function buyProduct(productId, price, name) {
+         const quantity = prompt(`Enter quantity for ${name}:`, "1");
+         if (quantity !== null && quantity.trim() !== "" && !isNaN(quantity) && parseInt(quantity) > 0) {
+             const total = price * parseInt(quantity);
+             if (confirm(`Total for ${quantity} ${name}(s): ₱${total.toFixed(2)}\nProceed to checkout?`)) {
+                 window.location.href = `proceed_checkout.php?product_id=${productId}&quantity=${quantity}`;
+             }
+         } else if (quantity !== null) {
+             alert("Please enter a valid quantity.");
+         }
+     }
   </script>
 </body>
 </html>
+
