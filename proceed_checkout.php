@@ -41,13 +41,42 @@ function validateStock($cart_items) {
     return ['valid' => true];
 }
 
-$cart_items = getCartItems($user_id);
+$product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
+$quantity = isset($_GET['quantity']) ? intval($_GET['quantity']) : 0;
 
-// Calculate total
-$total = 0;
-foreach ($cart_items as $item) {
-    $total += $item['price'] * $item['quantity'];
+if ($product_id > 0 && $quantity > 0) {
+    // Fetch the product details
+    $stmt = $db->prepare("SELECT * FROM products WHERE id = ?");
+    $stmt->bind_param("i", $product_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $product = $result->fetch_assoc();
+
+    if ($product) {
+        $cart_items = [
+            [
+                'product_id' => $product['id'],
+                'name' => $product['name'],
+                'price' => $product['price'],
+                'quantity' => $quantity,
+                'image' => $product['image'],
+            ]
+        ];
+        $total = $product['price'] * $quantity;
+    } else {
+        header("Location: home.php");
+        exit();
+    }
+} else {
+    // Existing cart logic
+    $cart_items = getCartItems($user_id);
+    // Calculate total
+    $total = 0;
+    foreach ($cart_items as $item) {
+        $total += $item['price'] * $item['quantity'];
+    }
 }
+
 
 // Guimba Barangays
 $guimba_barangays = [
@@ -62,10 +91,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $db->begin_transaction();
 
     try {
-        // Validate stock availability first
-        $stock_validation = validateStock($cart_items);
-        if (!$stock_validation['valid']) {
-            throw new Exception($stock_validation['message']);
+        // Check stock availability
+        foreach ($cart_items as $item) {
+            $stmt = $db->prepare("SELECT stock FROM products WHERE id = ?");
+            $stmt->bind_param("i", $item['product_id']);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $product = $result->fetch_assoc();
+
+            if ($product['stock'] < $item['quantity']) {
+                throw new Exception("Not enough stock available for " . $item['name']);
+            }
         }
 
         // Process the order
@@ -82,13 +118,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Create the order
         $stmt = $db->prepare("INSERT INTO orders (user_id, name, email, phone, address, barangay, city, province, region, country, zip, total_amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
+
         if (!$stmt) {
             throw new Exception("Prepare failed: " . $db->error);
         }
 
-        $stmt->bind_param("issssssssssd", 
-            $user_id, $name, $email, $phone, $address, $barangay, 
+        $stmt->bind_param("issssssssssd",
+            $user_id, $name, $email, $phone, $address, $barangay,
             $city, $province, $region, $country, $zip, $total
         );
 
@@ -105,37 +141,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmt->bind_param("iiid", $order_id, $item['product_id'], $item['quantity'], $item['price'])) {
                 throw new Exception("Failed to bind parameters for order item");
             }
-            
+
             if (!$stmt->execute()) {
                 throw new Exception("Failed to create order item: " . $stmt->error);
             }
+        }
 
-            // Update product stock
+        // Update product stock
+        foreach ($cart_items as $item) {
             $stmt = $db->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?");
-            if (!$stmt->bind_param("iii", $item['quantity'], $item['product_id'], $item['quantity'])) {
-                throw new Exception("Failed to bind parameters for stock update");
-            }
-            
+            $stmt->bind_param("iii", $item['quantity'], $item['product_id'], $item['quantity']);
             if (!$stmt->execute()) {
                 throw new Exception("Failed to update product stock: " . $stmt->error);
             }
-
             if ($stmt->affected_rows === 0) {
-                throw new Exception("Stock update failed for product: " . $item['name']);
+                throw new Exception("Not enough stock available for product: " . $item['name']);
             }
         }
 
+
         // Clear the cart
-        $stmt = $db->prepare("DELETE FROM cart_items WHERE user_id = ?");
-        $stmt->bind_param("i", $user_id);
-        
-        if (!$stmt->execute()) {
-            throw new Exception("Failed to clear cart: " . $stmt->error);
+        if ($product_id > 0 && $quantity > 0) {
+            // This is a direct purchase, no need to clear the cart
+        } else {
+            // Clear the cart for regular checkout
+            $stmt = $db->prepare("DELETE FROM cart_items WHERE user_id = ?");
+            $stmt->bind_param("i", $user_id);
+
+            if (!$stmt->execute()) {
+                throw new Exception("Failed to clear cart: " . $stmt->error);
+            }
         }
 
         // If we get here, commit the transaction
         $db->commit();
-        
+
         // Redirect to thank you page
         header("Location: thank_you.php?order_id=" . $order_id);
         exit();
@@ -159,7 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="bg-gray-100 font-sans">
     <div class="container mx-auto px-4 py-8">
         <h1 class="text-3xl font-bold mb-8 text-center text-green-800">Checkout</h1>
-        
+
         <?php if (isset($error)): ?>
             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
                 <?php echo htmlspecialchars($error); ?>
@@ -191,7 +231,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="bg-white p-6 rounded-lg shadow-md">
                     <h2 class="text-2xl font-semibold mb-4">Shipping Information</h2>
                     <form action="" method="POST">
