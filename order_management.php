@@ -60,6 +60,14 @@ function getOrderDetails($orderId) {
     return $result->fetch_all(MYSQLI_ASSOC);
 }
 
+// Add a new function to handle cancellation approval
+function approveCancellation($orderId) {
+    global $db;
+    $stmt = $db->prepare("UPDATE orders SET status = 'cancelled' WHERE id = ? AND status = 'cancellation_pending'");
+    $stmt->bind_param("i", $orderId);
+    return $stmt->execute();
+}
+
 // Handle order status update
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
     $orderId = intval($_POST['order_id']);
@@ -72,6 +80,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_status'])) {
         $successMessage = "Order status updated successfully.";
     } else {
         $errorMessage = "Failed to update order status.";
+    }
+}
+
+// Handle cancellation approval
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['approve_cancellation'])) {
+    $orderId = intval($_POST['order_id']);
+    if (approveCancellation($orderId)) {
+        $successMessage = "Cancellation approved successfully.";
+    } else {
+        $errorMessage = "Failed to approve cancellation.";
     }
 }
 
@@ -168,6 +186,7 @@ $totalPages = ceil($totalOrders / 10);
                                 case 'shipped': echo 'bg-purple-100 text-purple-800'; break;
                                 case 'delivered': echo 'bg-green-100 text-green-800'; break;
                                 case 'cancelled': echo 'bg-red-100 text-red-800'; break;
+                                case 'cancellation_pending': echo 'bg-red-100 text-red-800'; break;
                                 default: echo 'bg-gray-100 text-gray-800';
                             }
                             ?>">
@@ -184,6 +203,11 @@ $totalPages = ceil($totalOrders / 10);
                         <button onclick="showUpdateStatus(<?php echo $order['id']; ?>, '<?php echo $order['status']; ?>')" class="text-green-600 hover:text-green-900">
                             Update Status
                         </button>
+                        <?php if ($order['status'] === 'cancellation_pending'): ?>
+                            <button onclick="approveCancellation(<?php echo $order['id']; ?>)" class="text-red-600 hover:text-red-900 ml-2">
+                                Approve Cancellation
+                            </button>
+                        <?php endif; ?>
                         <?php if ($order['status'] === 'cancelled'): ?>
                             <button onclick="archiveOrder(<?php echo $order['id']; ?>)" class="text-gray-600 hover:text-gray-900">
                                 Archive
@@ -254,6 +278,7 @@ $totalPages = ceil($totalOrders / 10);
                                 <option value="shipped">Shipped</option>
                                 <option value="delivered">Delivered</option>
                                 <option value="cancelled">Cancelled</option>
+                                <option value="cancellation_pending">Cancellation Pending</option>
                             </select>
                         </form>
                     </div>
@@ -319,6 +344,7 @@ function getStatusColor(status) {
         case 'shipped': return 'bg-purple-100 text-purple-800';
         case 'delivered': return 'bg-green-100 text-green-800';
         case 'cancelled': return 'bg-red-100 text-red-800';
+        case 'cancellation_pending': return 'bg-red-100 text-red-800';
         default: return 'bg-gray-100 text-gray-800';
     }
 }
@@ -360,6 +386,31 @@ function archiveOrder(orderId) {
                 location.reload();
             } else {
                 alert('Failed to archive the order. Please try again.');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred. Please try again.');
+        });
+    }
+}
+
+function approveCancellation(orderId) {
+    if (confirm('Are you sure you want to approve this cancellation?')) {
+        fetch('approve_cancellation.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `order_id=${orderId}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Cancellation approved successfully');
+                location.reload();
+            } else {
+                alert('Failed to approve cancellation. Please try again.');
             }
         })
         .catch(error => {
