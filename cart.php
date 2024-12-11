@@ -200,6 +200,9 @@ foreach ($cart_items as $item) {
                 <table class="w-full">
                     <thead>
                         <tr class="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
+                            <th class="py-3 px-6 text-left">
+                                <input type="checkbox" id="selectAll" class="form-checkbox h-5 w-5 text-green-600">
+                            </th>
                             <th class="py-3 px-6 text-left">Product</th>
                             <th class="py-3 px-6 text-center">Quantity</th>
                             <th class="py-3 px-6 text-center">Price</th>
@@ -210,6 +213,9 @@ foreach ($cart_items as $item) {
                     <tbody class="text-gray-600 text-sm font-light">
                         <?php foreach ($cart_items as $item): ?>
                             <tr class="border-b border-gray-200 hover:bg-gray-100">
+                                <td class="py-3 px-6 text-left">
+                                    <input type="checkbox" name="selected_items[]" value="<?= $item['product_id'] ?>" class="form-checkbox h-5 w-5 text-green-600 item-checkbox">
+                                </td>
                                 <td class="py-3 px-6 text-left whitespace-nowrap">
                                     <div class="flex items-center">
                                         <img src="<?= htmlspecialchars($item['image']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="w-12 h-12 object-cover mr-3">
@@ -245,8 +251,8 @@ foreach ($cart_items as $item) {
             <div class="mt-8 flex flex-col md:flex-row justify-between items-center">
                 <a href="home.php" class="bg-gray-500 text-white px-6 py-2 rounded-full hover:bg-gray-600 transition duration-300 mb-4 md:mb-0">Continue Shopping</a>
                 <div class="text-right">
-                    <p class="text-xl font-semibold mb-2">Total: ₱<?= number_format($total, 2) ?></p>
-                    <a href="proceed_checkout.php" class="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition duration-300">Proceed to Checkout</a>
+                    <p class="text-xl font-semibold mb-2">Total: ₱<span id="totalAmount"><?= number_format($total, 2) ?></span></p>
+                    <button id="checkoutBtn" class="bg-green-600 text-white px-6 py-2 rounded-full hover:bg-green-700 transition duration-300" disabled>Proceed to Checkout</button>
                 </div>
             </div>
         <?php endif; ?>
@@ -264,6 +270,51 @@ foreach ($cart_items as $item) {
         function toggleSidebar() {
             document.body.classList.toggle('sidebar-open');
         }
+
+        // Select All functionality
+        const selectAllCheckbox = document.getElementById('selectAll');
+        const itemCheckboxes = document.querySelectorAll('.item-checkbox');
+        const checkoutBtn = document.getElementById('checkoutBtn');
+        const totalAmountSpan = document.getElementById('totalAmount');
+
+        selectAllCheckbox.addEventListener('change', function() {
+            itemCheckboxes.forEach(checkbox => {
+                checkbox.checked = this.checked;
+            });
+            updateCheckoutButton();
+            updateTotalAmount();
+        });
+
+        itemCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                updateCheckoutButton();
+                updateTotalAmount();
+            });
+        });
+
+        function updateCheckoutButton() {
+            const checkedItems = document.querySelectorAll('.item-checkbox:checked');
+            checkoutBtn.disabled = checkedItems.length === 0;
+        }
+
+        function updateTotalAmount() {
+            let total = 0;
+            itemCheckboxes.forEach(checkbox => {
+                if (checkbox.checked) {
+                    const row = checkbox.closest('tr');
+                    const itemTotal = parseFloat(row.querySelector('td:nth-child(5)').textContent.replace('₱', '').replace(',', ''));
+                    total += itemTotal;
+                }
+            });
+            totalAmountSpan.textContent = total.toFixed(2);
+        }
+
+        checkoutBtn.addEventListener('click', function() {
+            const selectedItems = Array.from(document.querySelectorAll('.item-checkbox:checked')).map(checkbox => checkbox.value);
+            if (selectedItems.length > 0) {
+                window.location.href = `proceed_checkout.php?items=${selectedItems.join(',')}`;
+            }
+        });
     </script>
 </body>
 </html>
