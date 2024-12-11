@@ -70,6 +70,19 @@ function getRecentOrdersGrouped($user_id, $limit = 50) {
     return $grouped_orders;
 }
 
+// Add this function after the getRecentOrdersGrouped function
+function getCancellationReasons() {
+    return [
+        'Changed my mind',
+        'Found a better deal elsewhere',
+        'Ordered by mistake',
+        'Shipping takes too long',
+        'Other'
+    ];
+}
+
+$cancellationReasons = getCancellationReasons();
+
 $grouped_orders = getRecentOrdersGrouped($user_id);
 ?>
 
@@ -145,6 +158,42 @@ $grouped_orders = getRecentOrdersGrouped($user_id);
             text-align: center;
             padding: 1rem 0;
             z-index: 30;
+        }
+        
+        /* Add these new styles for the modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
         }
     </style>
 </head>
@@ -282,8 +331,8 @@ $grouped_orders = getRecentOrdersGrouped($user_id);
                                 </div>
                                 <div class="flex justify-between items-center">
                                     <a href="order_details.php?id=<?= $order['id'] ?>" class="text-blue-600 hover:text-blue-800">View Details</a>
-                                    <?php if ($order['status'] == 'processing' || $order['status'] == 'shipped'): ?>
-                                        <button onclick="cancelOrder(<?= $order['id'] ?>)" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Cancel Order</button>
+                                    <?php if ($order['status'] == 'pending' || $order['status'] == 'processing'): ?>
+                                        <button onclick="openCancelModal(<?= $order['id'] ?>)" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Cancel Order</button>
                                     <?php elseif ($order['status'] == 'delivered'): ?>
                                         <button onclick="requestReturn(<?= $order['id'] ?>)" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600">Request Return</button>
                                     <?php endif; ?>
@@ -303,6 +352,24 @@ $grouped_orders = getRecentOrdersGrouped($user_id);
             <p>Committed to a sustainable future through recycling and eco-friendly shopping.</p>
         </div>
     </footer>
+
+    <div id="cancelModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 class="text-xl font-bold mb-4">Cancel Order</h2>
+            <p class="mb-4">Please select a reason for cancelling your order:</p>
+            <form id="cancelForm">
+                <input type="hidden" id="cancelOrderId" name="order_id" value="">
+                <select id="cancelReason" name="reason" class="w-full p-2 mb-4 border rounded">
+                    <?php foreach ($cancellationReasons as $reason): ?>
+                        <option value="<?= htmlspecialchars($reason) ?>"><?= htmlspecialchars($reason) ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <textarea id="cancelComment" name="comment" class="w-full p-2 mb-4 border rounded" placeholder="Additional comments (optional)"></textarea>
+                <button type="submit" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">Confirm Cancellation</button>
+            </form>
+        </div>
+    </div>
 
     <script>
         function toggleSidebar() {
@@ -376,7 +443,49 @@ $grouped_orders = getRecentOrdersGrouped($user_id);
                 });
             }
         }
+
+        // Add these new functions for the cancel modal
+        var modal = document.getElementById("cancelModal");
+        var span = document.getElementsByClassName("close")[0];
+
+        function openCancelModal(orderId) {
+            document.getElementById("cancelOrderId").value = orderId;
+            modal.style.display = "block";
+        }
+
+        span.onclick = function() {
+            modal.style.display = "none";
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+
+        document.getElementById("cancelForm").onsubmit = function(e) {
+            e.preventDefault();
+            var formData = new FormData(this);
+
+            fetch('cancel_order.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Order cancelled successfully');
+                    modal.style.display = "none";
+                    location.reload();
+                } else {
+                    alert('Failed to cancel the order. Please try again.');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred. Please try again.');
+            });
+        }
     </script>
 </body>
 </html>
-
