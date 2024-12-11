@@ -14,15 +14,17 @@ if (!isset($_SESSION['user_id'])) {
 
 $user_id = $_SESSION['user_id'];
 
-// Function to get cart items with stock check
-function getCartItems($user_id) {
+// Function to get selected cart items with stock check
+function getSelectedCartItems($user_id, $selected_items) {
     global $db;
+    $placeholders = implode(',', array_fill(0, count($selected_items), '?'));
     $query = "SELECT ci.*, p.name, p.price, p.image, p.stock 
               FROM cart_items ci 
               JOIN products p ON ci.product_id = p.id 
-              WHERE ci.user_id = ?";
+              WHERE ci.user_id = ? AND ci.product_id IN ($placeholders)";
     $stmt = $db->prepare($query);
-    $stmt->bind_param("i", $user_id);
+    $types = str_repeat('i', count($selected_items) + 1);
+    $stmt->bind_param($types, $user_id, ...$selected_items);
     $stmt->execute();
     $result = $stmt->get_result();
     return $result->fetch_all(MYSQLI_ASSOC);
@@ -41,48 +43,35 @@ function validateStock($cart_items) {
     return ['valid' => true];
 }
 
-$product_id = isset($_GET['product_id']) ? intval($_GET['product_id']) : 0;
-$quantity = isset($_GET['quantity']) ? intval($_GET['quantity']) : 0;
+$selected_items = isset($_GET['items']) ? explode(',', $_GET['items']) : [];
 
-if ($product_id > 0 && $quantity > 0) {
-    // Fetch the product details
-    $stmt = $db->prepare("SELECT * FROM products WHERE id = ?");
-    $stmt->bind_param("i", $product_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $product = $result->fetch_assoc();
-
-    if ($product) {
-        $cart_items = [
-            [
-                'product_id' => $product['id'],
-                'name' => $product['name'],
-                'price' => $product['price'],
-                'quantity' => $quantity,
-                'image' => $product['image'],
-            ]
-        ];
-        $total = $product['price'] * $quantity;
-    } else {
-        header("Location: home.php");
-        exit();
-    }
-} else {
-    // Existing cart logic
-    $cart_items = getCartItems($user_id);
-    // Calculate total
-    $total = 0;
-    foreach ($cart_items as $item) {
-        $total += $item['price'] * $item['quantity'];
-    }
+if (empty($selected_items)) {
+    header("Location: cart.php");
+    exit();
 }
 
+$cart_items = getSelectedCartItems($user_id, $selected_items);
+
+// Calculate total
+$total = 0;
+foreach ($cart_items as $item) {
+    $total += $item['price'] * $item['quantity'];
+}
 
 // Guimba Barangays
 $guimba_barangays = [
-    "Ayos Lomboy", "Bagong Buhay", "Bangar", "Calizon", "Cabaruan", "Cavite", "Naglabrahan",
-    "Pacac", "San Andres", "San Antonio", "San Bernardino", "San Roque", "Santa Ana", "Santa Cruz",
-    "Santa Lucia", "Santa Veronica", "Santo Cristo", "Triala", "Yuson"
+    "Agcano", "Ayos Lomboy", "Bacayao", "Bagong Barrio", "Balbalino", "Balingog East", 
+    "Balingog West", "Banitan", "Bantug", "Bulakid", "Bunol", "Caballero", "Cabaruan", 
+    "Caingin Tabing Ilog", "Calem", "Camiing", "Cardinal", "Casongsong", "Catimon", "Cavite", 
+    "Cawayan Bugtong", "Consuelo", "Culong", "Escaño", "Faigal", "Galvan", "Guiset", 
+    "Lamorito", "Lennec", "Macamias", "Macapabellag", "Macatcatuit", "Manacsac", 
+    "Manggang Marikit", "Maturanoc", "Maybubon", "Naglabrahan", "Nagpandayan", 
+    "Narvacan I", "Narvacan II", "Pacac", "Partida I", "Partida II", "Pasong Intsik", 
+    "Saint John District (Poblacion)", "San Agustin", "San Andres", "San Bernardino", 
+    "San Marcelino", "San Miguel", "San Rafael", "San Roque", "Santa Ana", "Santa Cruz", 
+    "Santa Lucia", "Santa Veronica District (Poblacion)", "Santo Cristo District (Poblacion)", 
+    "Saranay District (Poblacion)", "Sinulatan", "Subol", "Tampac I", "Tampac II & III", 
+    "Triala", "Yuson"
 ];
 
 // Handle form submission
@@ -92,16 +81,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         // Check stock availability
-        foreach ($cart_items as $item) {
-            $stmt = $db->prepare("SELECT stock FROM products WHERE id = ?");
-            $stmt->bind_param("i", $item['product_id']);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $product = $result->fetch_assoc();
-
-            if ($product['stock'] < $item['quantity']) {
-                throw new Exception("Not enough stock available for " . $item['name']);
-            }
+        $stock_validation = validateStock($cart_items);
+        if (!$stock_validation['valid']) {
+            throw new Exception($stock_validation['message']);
         }
 
         // Process the order
@@ -145,10 +127,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$stmt->execute()) {
                 throw new Exception("Failed to create order item: " . $stmt->error);
             }
-        }
 
-        // Update product stock
-        foreach ($cart_items as $item) {
+            // Update product stock
             $stmt = $db->prepare("UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?");
             $stmt->bind_param("iii", $item['quantity'], $item['product_id'], $item['quantity']);
             if (!$stmt->execute()) {
@@ -157,19 +137,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($stmt->affected_rows === 0) {
                 throw new Exception("Not enough stock available for product: " . $item['name']);
             }
-        }
 
-
-        // Clear the cart
-        if ($product_id > 0 && $quantity > 0) {
-            // This is a direct purchase, no need to clear the cart
-        } else {
-            // Clear the cart for regular checkout
-            $stmt = $db->prepare("DELETE FROM cart_items WHERE user_id = ?");
-            $stmt->bind_param("i", $user_id);
-
+            // Remove item from cart
+            $stmt = $db->prepare("DELETE FROM cart_items WHERE user_id = ? AND product_id = ?");
+            $stmt->bind_param("ii", $user_id, $item['product_id']);
             if (!$stmt->execute()) {
-                throw new Exception("Failed to clear cart: " . $stmt->error);
+                throw new Exception("Failed to remove item from cart: " . $stmt->error);
             }
         }
 
@@ -195,10 +168,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Checkout - Wastewise E-commerce</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(90deg, #38bdf8, #4ade80);
+        }
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .transition-300 {
+            transition: all 0.3s ease-in-out;
+        }
+    </style>
 </head>
-<body class="bg-gray-100 font-sans">
+<body class="bg-gray-50 font-sans">
     <div class="container mx-auto px-4 py-8">
-        <h1 class="text-3xl font-bold mb-8 text-center text-green-800">Checkout</h1>
+        <h1 class="text-4xl font-extrabold mb-10 text-center gradient-bg text-white py-4 rounded-lg shadow-md">Checkout</h1>
 
         <?php if (isset($error)): ?>
             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
@@ -208,78 +193,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <?php if (empty($cart_items)): ?>
             <div class="text-center">
-                <p class="text-xl text-gray-600 mb-4">Your cart is empty.</p>
-                <a href="home.php" class="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition duration-300">Continue Shopping</a>
+                <p class="text-xl text-gray-600 mb-4">No items selected for checkout.</p>
+                <a href="cart.php" class="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition duration-300">Return to Cart</a>
             </div>
         <?php else: ?>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div class="bg-white p-6 rounded-lg shadow-md">
-                    <h2 class="text-2xl font-semibold mb-4">Order Summary</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Order Summary -->
+                <div class="bg-white p-6 rounded-lg shadow-lg card-hover transition-300">
+                    <h2 class="text-2xl font-semibold mb-6 border-b pb-4">Order Summary</h2>
                     <?php foreach ($cart_items as $item): ?>
                         <div class="flex justify-between items-center mb-4">
                             <div>
-                                <h3 class="font-semibold"><?= htmlspecialchars($item['name']) ?></h3>
-                                <p class="text-gray-600">Quantity: <?= $item['quantity'] ?></p>
+                                <h3 class="font-semibold text-lg"><?= htmlspecialchars($item['name']) ?></h3>
+                                <p class="text-gray-500">Quantity: <?= $item['quantity'] ?></p>
                             </div>
-                            <p class="font-semibold">₱<?= number_format($item['price'] * $item['quantity'], 2) ?></p>
+                            <p class="font-bold text-lg text-green-600">₱<?= number_format($item['price'] * $item['quantity'], 2) ?></p>
                         </div>
                     <?php endforeach; ?>
                     <div class="border-t pt-4 mt-4">
                         <div class="flex justify-between items-center">
                             <h3 class="text-xl font-semibold">Total:</h3>
-                            <p class="text-xl font-semibold">₱<?= number_format($total, 2) ?></p>
+                            <p class="text-xl font-bold text-green-800">₱<?= number_format($total, 2) ?></p>
                         </div>
                     </div>
                 </div>
 
-                <div class="bg-white p-6 rounded-lg shadow-md">
-                    <h2 class="text-2xl font-semibold mb-4">Shipping Information</h2>
+                <!-- Shipping Information -->
+                <div class="bg-white p-6 rounded-lg shadow-lg card-hover transition-300">
+                    <h2 class="text-2xl font-semibold mb-6 border-b pb-4">Shipping Information</h2>
                     <form action="" method="POST">
-                        <div class="mb-4">
-                            <label for="name" class="block text-gray-700 font-semibold mb-2">Full Name</label>
-                            <input type="text" id="name" name="name" required class="w-full px-3 py-2 border rounded-md">
+                        <div class="space-y-4">
+                            <div>
+                                <label for="name" class="block text-gray-700 font-medium">Full Name</label>
+                                <input type="text" id="name" name="name" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <div>
+                                <label for="email" class="block text-gray-700 font-medium">Email</label>
+                                <input type="email" id="email" name="email" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <div>
+                                <label for="phone" class="block text-gray-700 font-medium">Phone</label>
+                                <input type="tel" id="phone" name="phone" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <div>
+                                <label for="address" class="block text-gray-700 font-medium">Address</label>
+                                <input type="text" id="address" name="address" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                            </div>
+                            <div>
+                                <label for="barangay" class="block text-gray-700 font-medium">Barangay</label>
+                                <select id="barangay" name="barangay" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                                    <?php foreach ($guimba_barangays as $barangay): ?>
+                                        <option value="<?= htmlspecialchars($barangay) ?>"><?= htmlspecialchars($barangay) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label for="city" class="block text-gray-700 font-medium">City</label>
+                                    <input type="text" id="city" name="city" value="Guimba" readonly class="w-full px-4 py-2 border rounded-md bg-gray-100">
+                                </div>
+                                <div>
+                                    <label for="province" class="block text-gray-700 font-medium">Province</label>
+                                    <input type="text" id="province" name="province" value="Nueva Ecija" readonly class="w-full px-4 py-2 border rounded-md bg-gray-100">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label for="region" class="block text-gray-700 font-medium">Region</label>
+                                    <input type="text" id="region" name="region" value="Region 3" readonly class="w-full px-4 py-2 border rounded-md bg-gray-100">
+                                </div>
+                                <div>
+                                    <label for="country" class="block text-gray-700 font-medium">Country</label>
+                                    <input type="text" id="country" name="country" value="Philippines" readonly class="w-full px-4 py-2 border rounded-md bg-gray-100">
+                                </div>
+                            </div>
+                            <div>
+                                <label for="zip" class="block text-gray-700 font-medium">ZIP Code</label>
+                                <input type="text" id="zip" name="zip" required class="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-green-400">
+                            </div>
                         </div>
-                        <div class="mb-4">
-                            <label for="email" class="block text-gray-700 font-semibold mb-2">Email</label>
-                            <input type="email" id="email" name="email" required class="w-full px-3 py-2 border rounded-md">
-                        </div>
-                        <div class="mb-4">
-                            <label for="phone" class="block text-gray-700 font-semibold mb-2">Phone</label>
-                            <input type="tel" id="phone" name="phone" required class="w-full px-3 py-2 border rounded-md">
-                        </div>
-                        <div class="mb-4">
-                            <label for="address" class="block text-gray-700 font-semibold mb-2">Address</label>
-                            <input type="text" id="address" name="address" required class="w-full px-3 py-2 border rounded-md">
-                        </div>
-                        <div class="mb-4">
-                            <label for="barangay" class="block text-gray-700 font-semibold mb-2">Barangay</label>
-                            <select id="barangay" name="barangay" required class="w-full px-3 py-2 border rounded-md">
-                                <?php foreach ($guimba_barangays as $barangay): ?>
-                                    <option value="<?= htmlspecialchars($barangay) ?>"><?= htmlspecialchars($barangay) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="mb-4">
-                            <label for="city" class="block text-gray-700 font-semibold mb-2">City</label>
-                            <input type="text" id="city" name="city" value="Guimba" readonly class="w-full px-3 py-2 border rounded-md bg-gray-100">
-                        </div>
-                        <div class="mb-4">
-                            <label for="province" class="block text-gray-700 font-semibold mb-2">Province</label>
-                            <input type="text" id="province" name="province" value="Nueva Ecija" readonly class="w-full px-3 py-2 border rounded-md bg-gray-100">
-                        </div>
-                        <div class="mb-4">
-                            <label for="region" class="block text-gray-700 font-semibold mb-2">Region</label>
-                            <input type="text" id="region" name="region" value="Region 3" readonly class="w-full px-3 py-2 border rounded-md bg-gray-100">
-                        </div>
-                        <div class="mb-4">
-                            <label for="country" class="block text-gray-700 font-semibold mb-2">Country</label>
-                            <input type="text" id="country" name="country" value="Philippines" readonly class="w-full px-3 py-2 border rounded-md bg-gray-100">
-                        </div>
-                        <div class="mb-6">
-                            <label for="zip" class="block text-gray-700 font-semibold mb-2">ZIP Code</label>
-                            <input type="text" id="zip" name="zip" required class="w-full px-3 py-2 border rounded-md">
-                        </div>
-                        <button type="submit" class="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-green-700 transition duration-300">Place Order</button>
+                        <button type="submit" class="mt-6 w-full bg-gradient-to-r from-green-500 to-green-600 text-white font-bold py-3 px-6 rounded-md hover:opacity-90 transition duration-300">Place Order</button>
                     </form>
                 </div>
             </div>
